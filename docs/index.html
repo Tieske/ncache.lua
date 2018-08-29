@@ -1,0 +1,356 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+   "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>
+<head>
+    <title>Normalized cache</title>
+    <link rel="stylesheet" href="ldoc.css" type="text/css" />
+</head>
+<body>
+
+<div id="container">
+
+<div id="product">
+	<div id="product_logo"></div>
+	<div id="product_name"><big><b></b></big></div>
+	<div id="product_description"></div>
+</div> <!-- id="product" -->
+
+
+<div id="main">
+
+
+<!-- Menu -->
+
+<div id="navigation">
+<br/>
+<h1>ncache.lua</h1>
+
+
+<h2>Contents</h2>
+<ul>
+<li><a href="#Functions">Functions</a></li>
+</ul>
+
+
+<h2>Modules</h2>
+<ul class="nowrap">
+  <li><strong>ncache</strong></li>
+</ul>
+<h2>Topics</h2>
+<ul class="">
+  <li><a href="topics/readme.md.html">readme</a></li>
+</ul>
+
+</div>
+
+<div id="content">
+
+<h1>Module <code>ncache</code></h1>
+<p><h1>Normalization cache</h1>
+
+<p> Use case: storing values by a specific key, except that the same key can have many
+ different representations.</p></p>
+<p> For example IPv6 addresses, where <code>[::1]</code>, <code>[::0:1]</code>, and
+ <code>[::0001]</code> all refer to the same address. To cache values you need normalization of the
+ key to a single, unique value for all the variants the key can have.</p>
+
+<p> Since you need the normalization on every cache lookup, this can become too expensive.
+ Hence this library not only caches the values, but also the normalization results. Which
+ means that every key-variant only needs to be normalized once.</p>
+
+<p> When creating a new cache you provide a normalization function, and the optionally the
+ cache instances for the two internal caches:</p>
+
+<ul>
+<li>key_cache : the cache that links the key variant to the normalized key.</li>
+<li>value_cache : the cache that holds the values, indexed by the normalized key.</li>
+</ul>
+
+
+<p> You can either provide an OpenResty LRU cache, or not provide one, in which case it will
+ get a simple Lua table based cache. In the latter case you have to watch memory usage, as
+ it might grow uncontrollable.</p>
+
+<p> When to use what caches for the <a href="index.html#new">new</a> call:</p>
+
+<p> <code>key_cache = nil, value_cache = nil</code></p>
+
+<p> In this case any data in there will only be removed when explicitly calling <a href="index.html#delete">delete</a>. So
+ only use this when the number of normalized-keys and their variants are limited. Otherwise
+ both caches can grow uncontrolled.</p>
+
+<p> <code>key_cache = nil, value_cache = resty-lru</code></p>
+
+<p> This will protect against too many normalized keys. But not against too many variants of
+ a single key. Since the key_cache can still grow uncontrolled.
+ In case a value gets evicted from the value-cache, then all its key-variants will also be
+ removed from the key-cache based on weak-table references.</p>
+
+<p> <code>key_cache = lru, value_cache = nil</code></p>
+
+<p> Use this if the number of normalized-keys is limited, but the variants are not.</p>
+
+<p> <code>key_cache = lru, value_cache = lru</code></p>
+
+<p> This protects against both types of memory usage.</p>
+
+<p> <em>Example 1:</em></p>
+
+<p> A cache of versioned items based on Semantic Versioning. Many input versions, in different formats
+ will lead to a limited number of compatible versions of objects to return.
+ Since the versions will (most likely) be defined in code, they will be limited. Both
+ the requested versions, as well as the returned versions.
+ In this case use the Lua-table based caches by providing <code>nil</code> for both of them, since there
+ is no risk of memory exhaustion in this case.</p>
+
+<p> <em>Example 2:</em></p>
+
+<p> Matching incoming requested IPv6 addresses to a limited number of upstream servers.
+ Since we know the upstream servers before hand, or through some configuration directive
+ they will be limited.</p>
+
+<p> But the incoming IPv6 addresses are user provided, and hence one can expect every possible
+ representation of that address to appear sometime (which are a lot!).
+ Hence for the value_cache (with a limited number of normalized addresses for the upstream
+ services) we can use the Lua-table based cache. But for the key-cache storing the combination
+ of every raw-key to normalized key, we must protect for overruns, and hence we use lru-cache.</p>
+
+<p> NOTE: besides the above on cache types, it is important to realize that even if there is no
+ value in the cache, looking it up, will still normalize the key. It will store the raw key, the
+ normalized key, and the fact that there is no value for that key. So repeatedly looking for a
+ non-existing key will only normalize the key once. The cost of this optimization is that it
+ will still use memory to store the non-existing entry, and hence grow memory usage. Keep this
+ in mind when picking the proper cache types.</p>
+    <h3>Info:</h3>
+    <ul>
+        <li><strong>Copyright</strong>: 2018 Thijs Schreijer</li>
+        <li><strong>License</strong>: MIT</li>
+        <li><strong>Author</strong>: Thijs Schreijer</li>
+    </ul>
+
+
+<h2><a href="#Functions">Functions</a></h2>
+<table class="function_list">
+	<tr>
+	<td class="name" nowrap><a href="#delete">delete (key)</a></td>
+	<td class="summary">Deletes a key from the cache.</td>
+	</tr>
+	<tr>
+	<td class="name" nowrap><a href="#flush_all">flush_all ()</a></td>
+	<td class="summary">Clears the cache.</td>
+	</tr>
+	<tr>
+	<td class="name" nowrap><a href="#get">get (key)</a></td>
+	<td class="summary">Gets a value from the cache.</td>
+	</tr>
+	<tr>
+	<td class="name" nowrap><a href="#new">new (normalizer, key_cache, value_cache)</a></td>
+	<td class="summary">Creates a new instance of the normalization cache.</td>
+	</tr>
+	<tr>
+	<td class="name" nowrap><a href="#normalize">normalize (key)</a></td>
+	<td class="summary">Returns the normalized key.</td>
+	</tr>
+	<tr>
+	<td class="name" nowrap><a href="#set">set (key, value)</a></td>
+	<td class="summary">Sets a value in the cache.</td>
+	</tr>
+</table>
+
+<br/>
+<br/>
+
+
+    <h2 class="section-header "><a name="Functions"></a>Functions</h2>
+
+    <dl class="function">
+    <dt>
+    <a name = "delete"></a>
+    <strong>delete (key)</strong>
+    </dt>
+    <dd>
+    Deletes a key from the cache.
+ The accompanying value will also be deleted, and all other variants of <code>key</code>
+ will be evicted.
+
+
+    <h3>Parameters:</h3>
+    <ul>
+        <li><span class="parameter">key</span>
+         the raw key in a normalizable format
+        </li>
+    </ul>
+
+    <h3>Returns:</h3>
+    <ol>
+
+        true, or nil+err
+    </ol>
+
+
+
+
+</dd>
+    <dt>
+    <a name = "flush_all"></a>
+    <strong>flush_all ()</strong>
+    </dt>
+    <dd>
+    Clears the cache.
+ Removes all values as well as all variants of normalized keys.
+
+
+
+    <h3>Returns:</h3>
+    <ol>
+
+        true
+    </ol>
+
+
+
+
+</dd>
+    <dt>
+    <a name = "get"></a>
+    <strong>get (key)</strong>
+    </dt>
+    <dd>
+    Gets a value from the cache.
+ Note: if there is no value, then still the normalization results will be stored
+ so even if nothing is in the cache, memory usage may increase when only getting.
+ To undo this, explicitly <a href="index.html#delete">delete</a> a key.
+
+
+    <h3>Parameters:</h3>
+    <ul>
+        <li><span class="parameter">key</span>
+         the raw key in a normalizable format
+        </li>
+    </ul>
+
+    <h3>Returns:</h3>
+    <ol>
+
+        the value, or nil + error. Note that <code>nil</code> is a valid value, and that
+ the error will be &ldquo;not found&rdquo; if the (normalized) key wasn&rsquo;t found.
+    </ol>
+
+
+
+
+</dd>
+    <dt>
+    <a name = "new"></a>
+    <strong>new (normalizer, key_cache, value_cache)</strong>
+    </dt>
+    <dd>
+    Creates a new instance of the normalization cache.
+ The cache objects are optional, and are API compatible with the OpenResty lru-cache. If not
+ provided then simple table based caches will be created, without an lru safety mechanism.
+
+
+    <h3>Parameters:</h3>
+    <ul>
+        <li><span class="parameter">normalizer</span>
+         (function) a function that normalizes a key value to a common, unique, non-nil representation
+        </li>
+        <li><span class="parameter">key_cache</span>
+         (optional) cache object (get, set, delete, flush_all) where the relation between the raw keys and values will be stored.
+        </li>
+        <li><span class="parameter">value_cache</span>
+         (optional) cache object (get, set, delete, flush_all) where the relation between the normalized key and values is stored
+        </li>
+    </ul>
+
+    <h3>Returns:</h3>
+    <ol>
+
+        normalization cache
+    </ol>
+
+
+
+    <h3>Usage:</h3>
+    <ul>
+        <pre class="example"><span class="comment">-- sample <code>normalizer</code> function
+</span><span class="keyword">local</span> normalizer = <span class="keyword">function</span>(key)
+  <span class="comment">-- normalize everything to a proper number
+</span>  <span class="keyword">local</span> key = <span class="global">tonumber</span>(key)
+  <span class="keyword">if</span> key <span class="keyword">then</span> <span class="keyword">return</span> key <span class="keyword">end</span>
+
+  <span class="keyword">return</span> <span class="keyword">nil</span>, <span class="string">"key was not coercable to a number"</span>
+<span class="keyword">end</span>
+
+<span class="keyword">local</span> cache = mcache.new(normalizer)</pre>
+    </ul>
+
+</dd>
+    <dt>
+    <a name = "normalize"></a>
+    <strong>normalize (key)</strong>
+    </dt>
+    <dd>
+    Returns the normalized key.
+ If the key was not in the cache, it will normalize and add it to the cache.
+
+
+    <h3>Parameters:</h3>
+    <ul>
+        <li><span class="parameter">key</span>
+         the raw key in a normalizable format
+        </li>
+    </ul>
+
+    <h3>Returns:</h3>
+    <ol>
+
+        the normalized key + key_entry (internal representation), or nil+error
+    </ol>
+
+
+
+
+</dd>
+    <dt>
+    <a name = "set"></a>
+    <strong>set (key, value)</strong>
+    </dt>
+    <dd>
+    Sets a value in the cache.
+ Note: <code>nil</code> is a valid value to set, use <a href="index.html#delete">delete</a> to remove an entry.
+
+
+    <h3>Parameters:</h3>
+    <ul>
+        <li><span class="parameter">key</span>
+         the raw key in a normalizable format
+        </li>
+        <li><span class="parameter">value</span>
+         the value to store (can be <code>nil</code>)
+        </li>
+    </ul>
+
+    <h3>Returns:</h3>
+    <ol>
+
+        true on success, nil + err on error
+    </ol>
+
+
+
+
+</dd>
+</dl>
+
+
+</div> <!-- id="content" -->
+</div> <!-- id="main" -->
+<div id="about">
+<i>generated by <a href="http://github.com/stevedonovan/LDoc">LDoc 1.4.6</a></i>
+<i style="float:right;">Last updated 2018-08-29 23:01:25 </i>
+</div> <!-- id="about" -->
+</div> <!-- id="container" -->
+</body>
+</html>

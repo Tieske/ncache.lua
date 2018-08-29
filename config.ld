@@ -1,0 +1,11 @@
+project='ncache.lua'
+title='Normalized cache'
+description='Cache with key-normalization (or many-to-1)'
+format='discount'
+file='./src/'
+dir='docs'
+readme='readme.md'
+sort=true
+sort_modules=true
+all=false
+style='./docs/'
