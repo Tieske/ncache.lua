@@ -1,4 +1,4 @@
---- #Normalization cache
+--- #Normalization cache (many-to-1 cache)
 --
 --
 -- Use case: storing values by a specific key, except that the same key can have many
@@ -30,18 +30,21 @@
 --
 -- `key_cache = nil, value_cache = resty-lru`
 --
--- This will protect against too many normalized keys. But not against too many variants of
+-- This will protect against too many values. But not against too many variants of
 -- a single key. Since the key_cache can still grow uncontrolled.
 -- In case a value gets evicted from the value-cache, then all its key-variants will also be
 -- removed from the key-cache based on weak-table references.
 --
 -- `key_cache = lru, value_cache = nil`
 --
--- Use this if the number of normalized-keys is limited, but the variants are not.
+-- Use this if the number of normalized-keys is limited, but the variants are not. Whenever a
+-- value gets deleted, its key-variants are 'abandoned', meaning they will not be immediately
+-- removed from memory, but since they are in an lru cache, they will slowly be evicted there.
 --
 -- `key_cache = lru, value_cache = lru`
 --
--- This protects against both types of memory usage.
+-- This protects against both types of memory usage. Here also, if a value get deleted, the
+-- key-variants will be abandoned, waiting for the lru-mechanism to evict them.
 --
 -- *Example 1:*
 --
@@ -76,10 +79,12 @@
 -- @license MIT
 
 local M = {}
+local MT = { __index = M }
 
 local ABSENT = {}  -- sentinel value indicating there is no value (for negative caching)
 local INVALID = {} -- sentinel value indicating the record is invalid and shouldn't be used
-local ERR_NOT_FOUND = "not found"
+
+M.ERR_NOT_FOUND = "key not found"
 
 
 -- Creates a simple Lua table based cache.
@@ -101,6 +106,7 @@ local function create_cache(weak)
     end,
     flush_all = function(self)
       cache = {}
+      -- self.cache = cache  -- for debugging only
       if weak then
         setmetatable(cache, { __mode = "v" })
       end
@@ -114,9 +120,13 @@ end
 --- Creates a new instance of the normalization cache.
 -- The cache objects are optional, and are API compatible with the OpenResty lru-cache. If not
 -- provided then simple table based caches will be created, without an lru safety mechanism.
+--
+-- The `value_cache_non_evicting` parameter provides a small performance gain if the provided
+-- `value_cache` does never evict any values
 -- @param normalizer (function) a function that normalizes a key value to a common, unique, non-nil representation
 -- @param key_cache (optional) cache object (get, set, delete, flush_all) where the relation between the raw keys and values will be stored.
--- @param value_cache (optional) cache object (get, set, delete, flush_all) where the relation between the normalized key and values is stored
+-- @param value_cache (optional) cache object (get, set, delete, flush_all) where the relation between the normalized key and values is stored.
+-- @param value_cache_non_evicting (boolean, optional) set to `true` if the `value_cache` provided will never evict data by itself.
 -- @return normalization cache
 -- @usage -- sample `normalizer` function
 -- local normalizer = function(key)
@@ -127,47 +137,58 @@ end
 --   return nil, "key was not coercable to a number"
 -- end
 --
--- local cache = mcache.new(normalizer)
-function M.new(normalizer, key_cache, value_cache)
+-- local cache = ncache.new(normalizer)
+function M.new(normalizer, key_cache, value_cache, value_cache_non_evicting)
   if type(normalizer) ~= "function" then
     error("new requires to pass a 'normalizer' function", 2)
   end
-  return setmetatable({
+  local self = setmetatable({
     normalizer = normalizer,
-    key_cache = key_cache or create_cache(true),
-    value_cache = value_cache or create_cache(false),
-  }, M)
+    key_cache = key_cache,
+    value_cache = value_cache,
+    value_cache_evicts = not value_cache_non_evicting,
+  }, MT)
+  if not self.key_cache then
+    self.key_cache = create_cache(true)
+  end
+  if not self.value_cache then
+    self.value_cache = create_cache(false)
+    if value_cache_non_evicting == nil then
+      self.value_cache_evicts = false
+    end
+  end
+  return self
 end
 
 
---- Returns the normalized key.
+-- Returns the normalized key.
 -- If the key was not in the cache, it will normalize and add it to the cache.
 -- @param key the raw key in a normalizable format
--- @return the normalized key + key_entry (internal representation), or nil+error
+-- @return the `normalized_key` + `key_entry` (an internal representation), or `nil + error`
 function M:normalize(key)
   local key_entry = self.key_cache:get(key)
   if key_entry == nil then
     -- not found, we need to normalize it first
-    local n_key, err = self.normalizer(key)
-    if n_key == nil then
+    local normalized_key, err = self.normalizer(key)
+    if normalized_key == nil then
       return nil, "failed to normalize key: " .. tostring(err)
     end
     -- look it up by the normalized key
-    key_entry = self.key_cache:get(n_key)
+    key_entry = self.key_cache:get(normalized_key)
     if key_entry ~= nil then
       -- new variant of an existing key, store the new one
       self.key_cache:set(key, key_entry)
     else
       -- a complete new entry
       key_entry = {
-        key = n_key,
+        key = normalized_key,
         value = ABSENT,
       }
       -- store both raw + normalized variants we currently have
       self.key_cache:set(key, key_entry)
-      self.key_cache:set(n_key, key_entry)
+      self.key_cache:set(normalized_key, key_entry)
       -- add the value to the proper cache
-      self.value_cache:set(n_key, key_entry)
+      self.value_cache:set(normalized_key, key_entry)
     end
 
   elseif key_entry.key == INVALID then
@@ -183,7 +204,8 @@ function M:normalize(key)
   -- which might lead to eviction of the value from the value-cache
   -- because of low access rate. And even then it might still get evicted
   -- so in those cases evict from key-cache as well and regenerate.
-  elseif key_entry ~= self.value_cache[key_entry.key] then
+  elseif self.value_cache_evicts and
+         key_entry ~= self.value_cache:get(key_entry.key) then
     -- value was removed from it's cache, can happen if its an lru...
     key_entry.value = ABSENT
     key_entry.key = INVALID
@@ -198,11 +220,43 @@ end
 -- Note: `nil` is a valid value to set, use `delete` to remove an entry.
 -- @param key the raw key in a normalizable format
 -- @param value the value to store (can be `nil`)
--- @return true on success, nil + err on error
+-- @return `true` on success, `nil + error` on error
+-- @usage
+-- local cache = ncache.new(tonumber)
+--
+-- cache:set(5, "value 5")
+-- cache:set("5", "why 5?")
+-- print(cache:get(5))    -- "why 5?"
+-- print(cache:get("5"))  -- "why 5?"
 function M:set(key, value)
-  local n_key, entry = self.normalize(key)
-  if n_key == nil then
+  local normalized_key, entry = self:normalize(key)
+  if normalized_key == nil then
     return nil, entry
+  end
+  entry.value = value
+  return true
+end
+
+--- Sets a value in the cache, under its raw key.
+-- When storing the value, the `normalizer` function will not be invoked.
+-- @param raw_key the normalized/raw key
+-- @param value the value to store (can be `nil`)
+-- @return `true`
+-- @usage
+-- local cache = ncache.new(tonumber)
+--
+-- cache:raw_set(5, "value 5")
+-- cache:raw_set("5", "why 5?")
+-- print(cache:get(5))            -- "value 5"
+-- print(cache:get("5"))          -- "why 5?"
+function M:raw_set(raw_key, value)
+  local entry = self.value_cache:get(raw_key)
+  if not entry then
+    entry = {
+      key = raw_key,
+    }
+    self.value_cache:set(raw_key, entry)
+    self.key_cache:set(raw_key, entry)
   end
   entry.value = value
   return true
@@ -213,30 +267,50 @@ end
 -- so even if nothing is in the cache, memory usage may increase when only getting.
 -- To undo this, explicitly `delete` a key.
 -- @param key the raw key in a normalizable format
--- @return the value, or nil + error. Note that `nil` is a valid value, and that
--- the error will be "not found" if the (normalized) key wasn't found.
+-- @return the value, or `nil + error`. Note that `nil` is a valid value, and that
+-- the error will be "key not found" if the (normalized) key wasn't found.
+-- @usage
+-- local cache = ncache.new(tonumber)
+--
+-- cache:set(5, "value 5")
+-- print(cache:get(5))    -- "value 5"
+-- print(cache:get("5"))  -- "value 5"
+--
+-- print(cache:get(6))    -- nil, "key not found"
+-- cache:set(6, nil)
+-- print(cache:get(6))    -- nil
 function M:get(key)
-  local n_key, entry = self.normalize(key)
-  if n_key == nil then
+  local normalized_key, entry = self:normalize(key)
+  if normalized_key == nil then
     return nil, entry
   end
 
   local value = entry.value
   if value == ABSENT then
-    return nil, ERR_NOT_FOUND
+    return nil, M.ERR_NOT_FOUND
   end
 
   return entry.value
 end
 
---- Deletes a key from the cache.
+--- Deletes a key/value from the cache.
 -- The accompanying value will also be deleted, and all other variants of `key`
--- will be evicted.
+-- will be evicted. To keep the normalization cache of all the key-variants use `set`
+-- to set the value to `nil`.
 -- @param key the raw key in a normalizable format
--- @return true, or nil+err
+-- @return `true`, or `nil + error`
+-- @usage
+-- local cache = ncache.new(tonumber)
+--
+-- cache:set(5, "value 5")
+-- print(cache:get(5))    -- "value 5"
+-- cache:set(5, nil)
+-- print(cache:get(5))    -- nil
+-- cache:delete(5)
+-- print(cache:get(5))    -- nil, "key not found"
 function M:delete(key)
-  local n_key, entry = self.normalize(key)
-  if n_key == nil then
+  local normalized_key, entry = self:normalize(key)
+  if normalized_key == nil then
     return nil, entry
   end
 
@@ -246,18 +320,20 @@ function M:delete(key)
   entry.key = INVALID
   -- delete the key variants we know explicitly
   self.key_cache:delete(key)
-  self.key_cache:delete(n_key)
+  self.key_cache:delete(normalized_key)
   -- delete the value
-  self.value_cache:delete(n_key)
+  self.value_cache:delete(normalized_key)
 
   return true
 end
 
 --- Clears the cache.
 -- Removes all values as well as all variants of normalized keys.
--- @return true
+-- @return `true`
 function M:flush_all()
   self.key_cache:flush_all()
   self.value_cache:flush_all()
   return true
 end
+
+return M

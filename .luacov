@@ -1,6 +1,6 @@
 modules = {
-   ["mcache"] = "src/mcache.lua",
-   ["mcache.*"] = "src"
+   ["ncache"] = "src/ncache.lua",
+   ["ncache.*"] = "src"
 }
 runreport = true
 deletestats = true

@@ -1,4 +1,4 @@
-std             = "ngx_lua"
+std             = "ngx_lua+busted"
 unused_args     = false
 redefined       = false
 max_line_length = false
@@ -27,16 +27,3 @@ exclude_files = {
     --"spec-old-api/fixtures/invalid-module.lua",
 }
 
-
---files["kong/plugins/ldap-auth/*.lua"] = {
---    read_globals = {
---        "bit.mod",
---        "string.pack",
---        "string.unpack",
---    },
---}
-
-
-files["spec/**/*.lua"] = {
-    std = "ngx_lua+busted",
-}

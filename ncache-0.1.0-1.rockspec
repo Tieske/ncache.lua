@@ -19,6 +19,6 @@ dependencies = {
 build = {
   type = "builtin",
   modules = {
-    ["mcache.init"] = "src/mcache.lua",
+    ["ncache.init"] = "src/ncache.lua",
   },
 }
