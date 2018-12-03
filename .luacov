@@ -3,4 +3,4 @@ modules = {
    ["ncache.*"] = "src"
 }
 runreport = true
-deletestats = true
+deletestats = false

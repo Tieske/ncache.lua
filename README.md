@@ -1,3 +1,6 @@
+[![Build Status](https://travis-ci.com/Tieske/ncache.lua.svg?branch=master)](https://travis-ci.com/Tieske/ncache.lua)
+[![Coverage Status](https://coveralls.io/repos/github/Tieske/ncache.lua/badge.svg?branch=master)](https://coveralls.io/github/Tieske/ncache.lua?branch=master)
+
 Ncache
 ======
 
