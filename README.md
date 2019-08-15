@@ -52,7 +52,7 @@ Copyright and License
 =====================
 
 ```
-Copyright 2018 Thijs Schreijer.
+Copyright 2019 Thijs Schreijer.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of
 this software and associated documentation files (the "Software"), to deal in
@@ -76,6 +76,6 @@ SOFTWARE.
 History
 =======
 
-0.1 xx-xxx-2018
+0.1 15-Aug-2019
 
 - Initial version

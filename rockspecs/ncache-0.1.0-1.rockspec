@@ -2,7 +2,7 @@ package = "ncache"
 version = "0.1.0-1"
 source = {
   url = "https://github.com/Tieske/ncache.lua/archive/0.1.0.tar.gz",
-  dir = "ncache-0.1.0"
+  dir = "ncache.lua-0.1.0"
 }
 description = {
   summary = "Cache with key normalization (many-to-1 cache)",
